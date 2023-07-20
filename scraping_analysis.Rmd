@@ -1,0 +1,288 @@
+---
+title: "Web Scraping and data analysis"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Scrape and plot data
+
+## 1.1 Ethical Issues
+
+
+###1. Restrictions on web scraping from wikipedia terms of usage 
+###Ans 1: In the terms of usage, Wikipedia has not mentioned explicitly regarding restrictions on scraping. However there are conditions regarding misuse of services and content, licensing of content, probing, scanning and testing etc. There are many Wikipedia scraping projects found online as well.
+
+
+###2.robots.txt. Is it permitted to scrape wiki-pages?
+###Ans 2: robots.txt can scrape Wikipedia pages. Most pages are allowed for scraping with some disclaimers. However it is mentioned that spiders that go way too fast can misbehave and hence be blocked. As we scroll down the robots.txt file we can see various disallowed paths. There are also User-agent mentioned which addresses the name of the specific spider/crawler. Thus it mentions the crawler to which the rules apply to , i.e disallow mentions the url path that may not be crawled by the crawler
+
+
+
+###3.Describe what do you do in order to reduce the burden to wikipedia website. For instance, you may:(a) Only load as many pages you need, no more
+### (b) Add a delay between scraping pages
+### (c) Cache the data locally, and only read if you need new data
+### (d) Donate money to wikipedia
+### (e) Use only a few mountains (e.g, only >8000m ones) for testing, and extend this to 6800m when the testing sample works.
+###Ans3)The most important rule while scraping a website is to not do any harm to the website. Follow the robots.txt as it tells which pages or files scrapers/crawlers can(under Allow) or cannot request from the site to avoid overloading the site with requests. In order to reduce the burden, we should only load as many pages as we need, in the assignment we have only scraped the portion of the webpage which is needed for our analysis and extracted only the required information. Scraping by humans and bots is different. When scraping large portions of the webpage, bots generally go very fast and hence can make fast and random requests,hence to avoid this we can add a delay. When humans scrape there is normally a delay and slow scraping/crawling. Storing the data that you need frequently can help avoid unnecessary crawls through webpages, for example in the assignment we extracted the needed part in a dataset and used it.
+
+
+
+## Parsing the list of mountains
+
+###1.Load the wikipedia list of mountains by height and parse it with rvest library
+
+
+###Ans1: 
+```{r}
+
+library(rvest)
+webpage<-read_html("C:/Users/ADMIN/Desktop/UW Academics/IMT573C/Mountains.html")
+webpage
+
+```
+
+
+### 2: Find all the tables there in the html.
+###2: The different tables present in the webpage are of different mountains of a particular height. There are 9 tables present.
+
+
+```{r}
+tablenames<-webpage %>% html_elements("h2") %>% html_elements("span.mw-headline") %>% .[2:9] %>% html_text() %>% paste()
+cat("Table names :\n")
+tablenames
+```
+
+###3:Find the table headers, and determine which columns are mountain names, heights, and where are the links to the individual mountain pages.
+###3
+```{r}
+
+# table headers
+tableheadings<- webpage %>% html_element("thead") %>% html_elements("th.headerSort") %>% html_text() 
+cat("The table headers are :\n")
+tableheadings
+cat("\nThe mountain names are present in Mountain column and height is given in 2 metrics - metres and feet")
+
+
+cat("\nThe links are present in Mountain column itself")
+links1<-webpage %>% html_nodes("table") %>% html_nodes(xpath="//td[1]") %>% html_node("a")  %>% html_attr("href")
+cat("\nSample of links:\n")
+head(links1)
+
+```
+
+
+###4.Creating a data frame that contains names and heights of the mountains above 6800m, and the links to the corresponding wikipedia pages. 
+### 4:
+```{r}
+
+#extract all tables from the webpage
+tbl2<-webpage %>% html_elements("table.sortable.wikitable.jquery-tablesorter") %>% html_table()
+
+
+#extracted dataframes are seperate 
+#Combine all dataframes  
+
+library(data.table)
+df<-rbindlist(tbl2,fill=TRUE)
+head(df)
+
+#select only required columns
+library(dplyr)
+df<- df %>% select(Mountain,Metres,Feet)
+
+
+#combine with the links extracted
+df<-cbind(df,links1)
+head(df)
+
+
+#convert metres and feet from character to numeric remove , and .
+df$Metres<-as.numeric(gsub(",","",df$Metres))
+df$Feet<-as.numeric(gsub(",","",df$Feet))
+
+
+#consider mountains only with height > 6800
+df<-df %>% filter(Metres>6800)
+head(df)
+
+
+cat("\n Number of rows in dataframe :",nrow(df))
+
+
+```
+
+
+### 1.3 Scrape the indivuidual mountain data 
+#### 1. A function that converts the longitude/latitude string to degrees (positive and negative).
+####Ans1:
+
+```{r}
+
+longtodegree<-function(longitude){
+  
+  D<-if(grepl("[WS]",longitude)) -1 else 1
+  dms<-strsplit(longitude, "[r°′″]" )
+  dd<-as.numeric(dms[[1]][1])
+  mm<-as.numeric(dms[[1]][2])
+  ss<-as.numeric(dms[[1]][3])
+  degrees<-(dd+mm/60 + ss/3600)*D
+  return(degrees)
+}
+
+
+#consider 1st link
+pg<-read_html(df$links1[1])
+
+cat("\n consider 1st link:",df$links1[1])
+longitude<-pg %>% html_node("span.longitude") %>% html_text()
+latitude<-pg %>% html_node("span.latitude") %>% html_text()
+cat("\n The longitude string extracted is :",longitude)
+
+d<-longtodegree(longitude)
+cat("\n Converted to degrees is :",d)
+
+cat("\n The latitude string extracted is :",latitude)
+
+d2<-longtodegree(latitude)
+cat("\n Converted to degrees is :",d2)
+
+```
+
+
+###2:Another function that takes link as an argument and loads the mountain’s html page and extracts latitude and longitude.
+
+
+```{r}
+
+
+extractfunction<-function(link){
+  
+     #try reading webpage with try block
+     pg=try(read_html(link),silent=TRUE)  
+     if(inherits(pg,"try-error"))  
+       return(NULL)
+       #if error opening webpage return NULL
+     long<-pg %>% html_node("span.longitude") %>% html_text() #extract longitude
+     lat<-pg %>% html_node("span.latitude") %>% html_text() #extract latitude
+   
+    coord=list(long,lat)
+    return(coord)
+   
+  }
+
+
+url=df$links1[1]
+cat("\n link passed :",url)
+q=extractfunction(url)
+q
+
+cat("\n Longitude :",q[[1]][1])
+cat("\n Latitude :",q[[2]][1])
+
+
+
+```
+
+
+
+###3:loop over the table of mountains you did above, download the mountain data, and extract the coordinates. Store these into the same data frame.
+
+
+###3)
+
+```{r message=FALSE,warning=FALSE}
+
+
+#empty list to store 
+newlong<-list()
+newlat<-list()
+final_long_coord<-list()
+final_lat_coord=list()
+
+
+for(i in 1:length(df$links1)){
+      #extract coordinates
+     longit=extractfunction(df$links1[i])[[1]][1]  
+     latit=extractfunction(df$links1[i])[[2]][1]
+     
+     #append to new list
+     newlong=append(newlong,longit)
+     newlat=append(newlat,latit)
+     
+     #convert to degree
+     temp_long_coord=longtodegree(newlong[[i]][1])
+     #append to list
+     final_long_coord=append(final_long_coord,temp_long_coord)
+     
+     temp_lat_coord=longtodegree(newlat[[i]][1])
+     final_lat_coord=append(final_lat_coord,temp_lat_coord)
+     
+}
+
+newlong=unlist(newlong)
+newlat=unlist(newlat)
+
+final_long_coord=unlist(final_long_coord)
+final_lat_coord=unlist(final_lat_coord)
+
+
+# some NA values are present
+sum(is.na(final_long_coord))
+sum(is.na(final_lat_coord))
+
+#add the degree coordinated in dataframe
+df2=df %>% mutate(Longitude=newlong,Latitude=newlat, Longitude_degree=final_long_coord,Latitude_degree=final_lat_coord)
+
+#remove rows with na degree coordinate values
+df2<-df2[!is.na(df2$Longitude_degree)]
+
+
+
+
+```
+
+###4 Print a sample of the dataframe and check that it looks good. 
+###4
+```{r}
+head(df2)
+nrow(df2)
+```
+
+
+##1.4 PLOT THE MOUNTAINS
+
+
+###1.4.1 Plot all the mountains on a world map. Color those according to their height.
+```{r}
+
+#select only required columns in the dataframe
+data<-df2 %>% select(Mountain,Metres,Longitude_degree,Latitude_degree)
+
+head(data)
+
+#arrange in ascending order of heights
+data<-data[order(data$Metres),]
+head(data)
+
+# plot
+library(ggplot2)
+world<-map_data("world")
+
+g1=ggplot(world)+ geom_polygon(aes(long,lat,group=group),col="white",fill="gray")
+
+g1+geom_point(data=data,aes(x=Longitude_degree,y=Latitude_degree,color=Metres))+ labs(x="Longitude",y="Latitude")+ coord_quickmap()
+```
+
+### Analysis
+### The light shaded dots represent the highest mountain ranges.Most of the mountain ranges of height above 6800m are located in the Himalayan range(spread across Nepal,Jammu and Kashmir and some near Tibet and in China), while 2 mountains are in South America(Aconcagua and Ojos del Salado). The tallest mountains(denoted by lightest dots) are concentrated in the Himalayan range - the highest being Mount Everest and K2(lightest dots on the map). The locations do make sense as all the Mountains considered in data frame are valid, there is no mountain range with weird placement such as in the middle of the sea.
+
+
+
+
